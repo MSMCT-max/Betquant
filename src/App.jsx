@@ -332,9 +332,10 @@ export default function App() {
   const loadTeamData = async (team, side) => {
     if (!team || !apiKey) return;
     setLoading(true);
+    const national = team.national === true;
     try {
       setLoadingMsg(`Chargement des matchs de ${team.name}...`);
-      const fixtures = await getLastFixtures(team.id, apiKey);
+      const fixtures = await getLastFixtures(team.id, apiKey, national);
       const mapped = fixtures.map(f => ({
         scoredReal: String(f.scoredReal),
         scoredXG: f.scoredXG ? String(f.scoredXG) : String(f.scoredReal),
@@ -349,7 +350,7 @@ export default function App() {
       else setMatchesB(mapped);
 
       setLoadingMsg(`Chargement fatigue ${team.name}...`);
-      const days = await getDaysSinceLastMatch(team.id, apiKey);
+      const days = await getDaysSinceLastMatch(team.id, apiKey, national);
       if (days !== null) {
         if (side === "A") setDaysA(String(days));
         else setDaysB(String(days));

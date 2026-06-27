@@ -1,11 +1,34 @@
-import { useState, useEffect, useRef } from "react";
-import { searchTeams, getLastFixtures, getSeasonStats, getH2H, getDaysSinceLastMatch, validateApiKey } from "./api.js";
+import { useState, useRef } from "react";
+import { searchTeams, getLastFixtures, getH2H, getDaysSinceLastMatch, validateApiKey } from "./api.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────
 const TYPE_WEIGHT = { official: 1.0, minor: 0.7, friendly: 0.3 };
 const RECENCY_WEIGHT = [1.0, 0.85, 0.7, 0.55, 0.4];
 const FORM_WEIGHT = 0.6;
 const SEASON_WEIGHT = 0.4;
+const WEATHER_FACTOR = { normal: 1.0, rain: 0.92, wind: 0.90, cold: 0.95, heat: 0.96 };
+const HOME_BONUS = { home: 0.3, away: -0.15, neutral: 0 };
+const ENJEU_FACTOR = { high: 1.05, normal: 1.0, low: 0.90 };
+
+// ─── Colors ───────────────────────────────────────────────────────────────
+const BLUE = "#2563eb";
+const BLUE_BG = "#eff6ff";
+const TEAL = "#0d9488";
+const TEAL_BG = "#f0fdfa";
+const GREEN = "#16a34a";
+const GREEN_BG = "#dcfce7";
+const GREEN_LIGHT = "#f0fdf4";
+const GREEN_BORDER = "#bbf7d0";
+const GRAY_BG = "#f8f9fa";
+const CARD_BG = "#ffffff";
+const BORDER = "#e5e7eb";
+const BAR_BG = "#f1f5f9";
+const TEXT = "#111827";
+const TEXT_SUB = "#6b7280";
+const TEXT_MUTED = "#9ca3af";
+const RED = "#dc2626";
+const RED_BG = "#fef2f2";
+const RED_BORDER = "#fecaca";
 
 // ─── Poisson ──────────────────────────────────────────────────────────────
 function poissonProb(lambda, k) {
@@ -30,10 +53,7 @@ function computeMatch(lambdaA, lambdaB, maxGoals = 8) {
   return { winA, draw, winB, grid };
 }
 
-function toOdds(p) {
-  if (p <= 0.001) return "∞";
-  return (1 / p).toFixed(2);
-}
+function toOdds(p) { return p <= 0.001 ? "∞" : (1 / p).toFixed(2); }
 
 function weightedFormAvg(matches) {
   let sumSR = 0, sumSX = 0, sumCR = 0, sumCX = 0, totalW = 0, validCount = 0;
@@ -80,28 +100,63 @@ function valueInfo(myP, bookOdds) {
   return { edge, isValue: myP > impliedP };
 }
 
-const WEATHER_FACTOR = { normal: 1.0, rain: 0.92, wind: 0.90, cold: 0.95, heat: 0.96 };
-const HOME_BONUS = { home: 0.3, away: -0.15, neutral: 0 };
-const ENJEU_FACTOR = { high: 1.05, normal: 1.0, low: 0.90 };
-
 // ─── UI Primitives ────────────────────────────────────────────────────────
-const C = { bg: "#020c1b", surface: "#0a1628", deep: "#07111f", border: "#1e293b", textMain: "#f1f5f9", textSub: "#64748b", textMuted: "#334155", indigo: "#6366f1", indigoLight: "#818cf8", amber: "#f59e0b", green: "#4ade80", red: "#f87171", teal: "#2dd4bf" };
+const Card = ({ children, style }) => (
+  <div style={{ background: CARD_BG, border: `0.5px solid ${BORDER}`, borderRadius: 12, padding: 16, marginBottom: 12, ...style }}>
+    {children}
+  </div>
+);
 
-const s = {
-  label: { fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.textSub, display: "block", marginBottom: 4 },
-  input: { background: C.deep, border: `1px solid ${C.border}`, borderRadius: 8, color: C.textMain, fontSize: 14, padding: "9px 11px", width: "100%", boxSizing: "border-box", outline: "none", fontFamily: "inherit" },
-  numInput: { background: C.deep, border: `1px solid ${C.border}`, borderRadius: 6, color: C.textMain, fontSize: 13, padding: "7px 9px", width: "100%", boxSizing: "border-box", fontFamily: "monospace", outline: "none" },
-  section: { background: C.surface, borderRadius: 12, padding: 14, border: `1px solid ${C.border}`, marginBottom: 12 },
-  btn: (bg, color = "#fff") => ({ width: "100%", padding: "13px", borderRadius: 10, background: bg, color, fontWeight: 800, fontSize: 14, border: "none", cursor: "pointer" }),
-  smallBtn: (active, color) => ({ flex: 1, padding: "5px 4px", borderRadius: 6, fontSize: 10, fontWeight: 700, border: `1px solid ${active ? color : C.border}`, background: active ? `${color}22` : C.deep, color: active ? color : C.textSub, cursor: "pointer" }),
-};
+const SectionLabel = ({ children }) => (
+  <div style={{ fontSize: 11, fontWeight: 500, color: TEXT_MUTED, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
+    {children}
+  </div>
+);
 
-const Lbl = ({ children }) => <span style={s.label}>{children}</span>;
-const Num = ({ value, onChange, placeholder }) => <input type="number" min="0" step="0.01" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} style={s.numInput} />;
-const Tabs = ({ options, value, onChange, color }) => <div style={{ display: "flex", gap: 4 }}>{options.map(([v, l]) => <button key={v} onClick={() => onChange(v)} style={s.smallBtn(value === v, color)}>{l}</button>)}</div>;
+const NumInput = ({ value, onChange, placeholder }) => (
+  <input type="number" min="0" step="0.01" value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+    style={{ background: GRAY_BG, border: `0.5px solid ${BORDER}`, borderRadius: 6, color: TEXT, fontSize: 13, padding: "7px 9px", width: "100%", boxSizing: "border-box", fontFamily: "monospace", outline: "none" }} />
+);
 
-// ─── Team Search ──────────────────────────────────────────────────────────
-function TeamSearch({ label, color, onSelect, selected, apiKey }) {
+const TabGroup = ({ options, value, onChange, color }) => (
+  <div style={{ display: "flex", gap: 4 }}>
+    {options.map(([v, l]) => (
+      <button key={v} onClick={() => onChange(v)} style={{
+        flex: 1, padding: "6px 4px", borderRadius: 6, fontSize: 11, fontWeight: 500,
+        border: `0.5px solid ${value === v ? color : BORDER}`,
+        background: value === v ? `${color}15` : GRAY_BG,
+        color: value === v ? color : TEXT_MUTED, cursor: "pointer",
+      }}>{l}</button>
+    ))}
+  </div>
+);
+
+const Toggle = ({ value, onChange, label }) => (
+  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0" }}>
+    <span style={{ fontSize: 13, color: TEXT }}>{label}</span>
+    <button onClick={() => onChange(!value)} style={{
+      padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 500,
+      border: `0.5px solid ${value ? RED : BORDER}`,
+      background: value ? RED_BG : GRAY_BG,
+      color: value ? RED : TEXT_MUTED, cursor: "pointer",
+    }}>{value ? "Oui −15%" : "Non"}</button>
+  </div>
+);
+
+// ─── Step indicator ───────────────────────────────────────────────────────
+function StepBar({ current }) {
+  const steps = ["Match", "Contexte", "Marché"];
+  return (
+    <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: `1.5px solid ${BORDER}` }}>
+      {steps.map((s, i) => (
+        <div key={i} style={{ padding: "8px 16px", fontSize: 13, fontWeight: i === current ? 500 : 400, color: i === current ? GREEN : TEXT_MUTED, borderBottom: i === current ? `2px solid ${GREEN}` : "none", marginBottom: -1.5, cursor: "default" }}>{s}</div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Team search ──────────────────────────────────────────────────────────
+function TeamSearch({ label, color, colorBg, onSelect, selected, apiKey }) {
   const [query, setQuery] = useState(selected?.name || "");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -113,32 +168,32 @@ function TeamSearch({ label, color, onSelect, selected, apiKey }) {
     if (q.length < 3) { setResults([]); return; }
     debounce.current = setTimeout(async () => {
       setLoading(true);
-      try {
-        const teams = await searchTeams(q, apiKey);
-        setResults(teams.slice(0, 5));
-      } catch (e) { setResults([]); }
+      try { setResults((await searchTeams(q, apiKey)).slice(0, 5)); }
+      catch (e) { setResults([]); }
       setLoading(false);
     }, 600);
   };
 
   return (
-    <div style={{ position: "relative" }}>
-      <Lbl>{label}</Lbl>
+    <div style={{ position: "relative", marginBottom: 8 }}>
+      <div style={{ fontSize: 11, fontWeight: 500, color: TEXT_MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>{label}</div>
       <div style={{ position: "relative" }}>
-        <input value={query} onChange={e => search(e.target.value)} placeholder="Tape le nom de l'équipe..." style={{ ...s.input, borderColor: selected ? color : C.border, color: selected ? color : C.textMain, fontWeight: selected ? 700 : 400 }} />
-        {loading && <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: C.textSub }}>...</span>}
+        <input value={query} onChange={e => search(e.target.value)} placeholder="Tape le nom de l'équipe..."
+          style={{ width: "100%", boxSizing: "border-box", padding: "10px 36px 10px 12px", background: selected ? colorBg : GRAY_BG, border: `0.5px solid ${selected ? color : BORDER}`, borderRadius: 8, fontSize: 13, fontWeight: selected ? 500 : 400, color: selected ? color : TEXT, outline: "none" }} />
+        {loading && <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: TEXT_MUTED }}>…</span>}
+        {selected && !loading && <i className="ti ti-check" style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: GREEN, fontSize: 16 }} aria-hidden="true" />}
       </div>
       {results.length > 0 && (
-        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8, zIndex: 100, overflow: "hidden", marginTop: 4 }}>
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: CARD_BG, border: `0.5px solid ${BORDER}`, borderRadius: 8, zIndex: 100, overflow: "hidden", marginTop: 4, boxShadow: "0 4px 12px rgba(0,0,0,0.08)" }}>
           {results.map(t => (
             <div key={t.id} onClick={() => { onSelect(t); setQuery(t.name); setResults([]); }}
-              style={{ padding: "10px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, borderBottom: `1px solid ${C.border}` }}
-              onMouseEnter={e => e.currentTarget.style.background = C.deep}
+              style={{ padding: "10px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, borderBottom: `0.5px solid ${BORDER}` }}
+              onMouseEnter={e => e.currentTarget.style.background = GRAY_BG}
               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-              {t.logo && <img src={t.logo} alt="" style={{ width: 20, height: 20, objectFit: "contain" }} />}
+              {t.logo && <img src={t.logo} alt="" style={{ width: 22, height: 22, objectFit: "contain" }} />}
               <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.textMain }}>{t.name}</div>
-                <div style={{ fontSize: 10, color: C.textSub }}>{t.country}</div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: TEXT }}>{t.name}</div>
+                <div style={{ fontSize: 11, color: TEXT_MUTED }}>{t.national ? "Équipe nationale" : "Club"} · {t.country}</div>
               </div>
             </div>
           ))}
@@ -148,7 +203,7 @@ function TeamSearch({ label, color, onSelect, selected, apiKey }) {
   );
 }
 
-// ─── Setup Screen ─────────────────────────────────────────────────────────
+// ─── Setup screen ─────────────────────────────────────────────────────────
 function SetupScreen({ onSave }) {
   const [key, setKey] = useState("");
   const [loading, setLoading] = useState(false);
@@ -159,45 +214,34 @@ function SetupScreen({ onSave }) {
     setLoading(true); setError("");
     const result = await validateApiKey(key.trim());
     setLoading(false);
-    if (result.valid) {
-      localStorage.setItem("betquant_api_key", key.trim());
-      onSave(key.trim());
-    } else {
-      setError("Clé invalide. Vérifie sur api-sports.io → Mon accès.");
-    }
+    if (result.valid) { localStorage.setItem("betquant_api_key", key.trim()); onSave(key.trim()); }
+    else setError("Clé invalide. Vérifie sur api-sports.io → Mon accès.");
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ maxWidth: 380, width: "100%" }}>
+    <div style={{ minHeight: "100vh", background: GRAY_BG, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, fontFamily: "system-ui, sans-serif" }}>
+      <div style={{ maxWidth: 360, width: "100%" }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ fontSize: 48, marginBottom: 8 }}>⚽</div>
-          <div style={{ fontSize: 26, fontWeight: 800, color: C.textMain, letterSpacing: "-0.03em" }}>BetQuant</div>
-          <div style={{ fontSize: 13, color: C.textSub, marginTop: 6 }}>Outil de paris quantitatif football</div>
-        </div>
-
-        <div style={s.section}>
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: C.textMain, marginBottom: 6 }}>🔑 Ta clé API-Football</div>
-            <div style={{ fontSize: 12, color: C.textSub, lineHeight: 1.6 }}>
-              Récupère ta clé sur <span style={{ color: C.indigoLight }}>api-sports.io</span> → Tableau de bord → Mon accès
-            </div>
+          <div style={{ width: 56, height: 56, background: GREEN, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px" }}>
+            <i className="ti ti-ball-football" style={{ color: "#fff", fontSize: 26 }} aria-hidden="true" />
           </div>
-          <input
-            type="password"
-            value={key}
-            onChange={e => setKey(e.target.value)}
-            placeholder="Colle ta clé ici..."
-            style={{ ...s.input, marginBottom: 12, fontFamily: "monospace", fontSize: 13 }}
-          />
-          {error && <div style={{ fontSize: 12, color: C.red, marginBottom: 10 }}>⚠️ {error}</div>}
-          <button onClick={validate} disabled={loading} style={s.btn(`linear-gradient(135deg, #4f46e5, #6366f1)`)}>
-            {loading ? "Vérification..." : "Valider et démarrer →"}
-          </button>
+          <div style={{ fontSize: 22, fontWeight: 500, color: TEXT, letterSpacing: "-0.03em" }}>BetQuant</div>
+          <div style={{ fontSize: 13, color: TEXT_MUTED, marginTop: 4 }}>Analyse quantitative football</div>
         </div>
-
-        <div style={{ fontSize: 11, color: C.textMuted, textAlign: "center", lineHeight: 1.6 }}>
-          Ta clé est stockée uniquement sur ton appareil.<br />Elle n'est jamais envoyée à nos serveurs.
+        <Card>
+          <SectionLabel>Clé API-Football</SectionLabel>
+          <div style={{ fontSize: 12, color: TEXT_SUB, marginBottom: 12, lineHeight: 1.6 }}>
+            Récupère ta clé sur <span style={{ color: BLUE }}>api-sports.io</span> → Tableau de bord → Mon accès
+          </div>
+          <input type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="Colle ta clé ici..."
+            style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", background: GRAY_BG, border: `0.5px solid ${BORDER}`, borderRadius: 8, fontSize: 13, fontFamily: "monospace", outline: "none", marginBottom: error ? 8 : 12 }} />
+          {error && <div style={{ fontSize: 12, color: RED, marginBottom: 10 }}>⚠ {error}</div>}
+          <button onClick={validate} disabled={loading} style={{ width: "100%", padding: "12px", borderRadius: 8, background: GREEN, color: "#fff", fontWeight: 500, fontSize: 14, border: "none", cursor: "pointer" }}>
+            {loading ? "Vérification..." : "Démarrer →"}
+          </button>
+        </Card>
+        <div style={{ fontSize: 11, color: TEXT_MUTED, textAlign: "center", lineHeight: 1.6 }}>
+          Ta clé est stockée uniquement sur ton appareil.
         </div>
       </div>
     </div>
@@ -207,25 +251,11 @@ function SetupScreen({ onSave }) {
 // ─── Loading overlay ──────────────────────────────────────────────────────
 function LoadingOverlay({ message }) {
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(2,12,27,0.92)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
-      <div style={{ fontSize: 36, marginBottom: 16, animation: "spin 1s linear infinite" }}>⚽</div>
-      <div style={{ fontSize: 14, color: C.textSub }}>{message}</div>
-      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
-    </div>
-  );
-}
-
-// ─── Step bar ─────────────────────────────────────────────────────────────
-function StepBar({ current }) {
-  const steps = ["Match", "Contexte", "Marché"];
-  return (
-    <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
-      {steps.map((s, i) => (
-        <div key={i} style={{ flex: 1 }}>
-          <div style={{ height: 3, borderRadius: 2, marginBottom: 3, background: i <= current ? C.indigo : C.border }} />
-          <span style={{ fontSize: 9, fontWeight: 700, color: i === current ? C.indigoLight : i < current ? C.indigo : C.border, textTransform: "uppercase", letterSpacing: "0.06em" }}>{s}</span>
-        </div>
-      ))}
+    <div style={{ position: "fixed", inset: 0, background: "rgba(248,249,250,0.92)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+      <div style={{ width: 44, height: 44, background: GREEN, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
+        <i className="ti ti-ball-football" style={{ color: "#fff", fontSize: 22 }} aria-hidden="true" />
+      </div>
+      <div style={{ fontSize: 13, color: TEXT_SUB }}>{message}</div>
     </div>
   );
 }
@@ -236,22 +266,22 @@ const TYPE_OPTS = [["official", "🏆 Off."], ["minor", "🥈 Min."], ["friendly
 
 function MatchRow({ idx, match, onChange, color }) {
   return (
-    <div style={{ background: C.deep, borderRadius: 8, padding: 10, marginBottom: 6, border: `1px solid ${idx === 0 ? color + "44" : C.border}` }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: idx === 0 ? color : C.textSub }}>
+    <div style={{ background: GRAY_BG, borderRadius: 8, padding: 10, marginBottom: 6, border: `0.5px solid ${idx === 0 ? color + "44" : BORDER}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 7 }}>
+        <span style={{ fontSize: 11, fontWeight: 500, color: idx === 0 ? color : TEXT_MUTED }}>
           {match.opponent ? `vs ${match.opponent}` : `Match ${idx + 1}`}{idx === 0 ? " · récent" : ""}
         </span>
-        <span style={{ fontSize: 9, color: "#1e3a5f" }}>×{(TYPE_WEIGHT[match.type] * RECENCY_WEIGHT[idx]).toFixed(2)}</span>
+        <span style={{ fontSize: 10, color: TEXT_MUTED }}>×{(TYPE_WEIGHT[match.type] * RECENCY_WEIGHT[idx]).toFixed(2)}</span>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 5, marginBottom: 6 }}>
-        <div><Lbl>⚽ Mq.</Lbl><Num value={match.scoredReal} onChange={v => onChange({ ...match, scoredReal: v })} placeholder="2" /></div>
-        <div><Lbl>📐 xG+</Lbl><Num value={match.scoredXG} onChange={v => onChange({ ...match, scoredXG: v })} placeholder="1.8" /></div>
-        <div><Lbl>🛡️ Enc.</Lbl><Num value={match.concededReal} onChange={v => onChange({ ...match, concededReal: v })} placeholder="1" /></div>
-        <div><Lbl>📐 xG-</Lbl><Num value={match.concededXG} onChange={v => onChange({ ...match, concededXG: v })} placeholder="0.7" /></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 5, marginBottom: 7 }}>
+        <div><div style={{ fontSize: 10, color: TEXT_MUTED, marginBottom: 3 }}>⚽ Mq.</div><NumInput value={match.scoredReal} onChange={v => onChange({ ...match, scoredReal: v })} placeholder="2" /></div>
+        <div><div style={{ fontSize: 10, color: TEXT_MUTED, marginBottom: 3 }}>📐 xG+</div><NumInput value={match.scoredXG} onChange={v => onChange({ ...match, scoredXG: v })} placeholder="1.8" /></div>
+        <div><div style={{ fontSize: 10, color: TEXT_MUTED, marginBottom: 3 }}>🛡 Enc.</div><NumInput value={match.concededReal} onChange={v => onChange({ ...match, concededReal: v })} placeholder="1" /></div>
+        <div><div style={{ fontSize: 10, color: TEXT_MUTED, marginBottom: 3 }}>📐 xG-</div><NumInput value={match.concededXG} onChange={v => onChange({ ...match, concededXG: v })} placeholder="0.7" /></div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
-        <div><Lbl>Lieu</Lbl><Tabs options={VENUE_OPTS} value={match.venue} onChange={v => onChange({ ...match, venue: v })} color={color} /></div>
-        <div><Lbl>Type</Lbl><Tabs options={TYPE_OPTS} value={match.type} onChange={v => onChange({ ...match, type: v })} color={color} /></div>
+        <TabGroup options={VENUE_OPTS} value={match.venue} onChange={v => onChange({ ...match, venue: v })} color={color} />
+        <TabGroup options={TYPE_OPTS} value={match.type} onChange={v => onChange({ ...match, type: v })} color={color} />
       </div>
     </div>
   );
@@ -262,20 +292,20 @@ function ProbBar({ label, prob, bookOdds, color }) {
   const v = bookOdds ? valueInfo(prob, bookOdds) : null;
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: C.textMain }}>{label}</span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
+        <span style={{ fontSize: 13, color: TEXT }}>{label}</span>
         <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-          <span style={{ fontSize: 21, fontWeight: 800, color, fontFamily: "monospace" }}>{(prob * 100).toFixed(1)}%</span>
-          <span style={{ fontSize: 11, color: C.textSub, fontFamily: "monospace" }}>cote {toOdds(prob)}</span>
+          <span style={{ fontSize: 22, fontWeight: 500, color, fontFamily: "monospace" }}>{(prob * 100).toFixed(1)}%</span>
+          <span style={{ fontSize: 12, color: TEXT_MUTED, fontFamily: "monospace" }}>cote {toOdds(prob)}</span>
         </div>
       </div>
-      <div style={{ background: C.border, borderRadius: 4, height: 5, overflow: "hidden", marginBottom: v ? 5 : 0 }}>
-        <div style={{ width: `${Math.min(prob * 100, 100)}%`, height: "100%", background: color, borderRadius: 4 }} />
+      <div style={{ height: 5, background: BAR_BG, borderRadius: 3, overflow: "hidden", marginBottom: v ? 6 : 0 }}>
+        <div style={{ width: `${Math.min(prob * 100, 100)}%`, height: "100%", background: color, borderRadius: 3 }} />
       </div>
       {v && (
-        <div style={{ padding: "4px 10px", borderRadius: 6, display: "inline-flex", alignItems: "center", gap: 5, background: v.isValue ? "rgba(74,222,128,0.1)" : "rgba(248,113,113,0.07)", border: `1px solid ${v.isValue ? "rgba(74,222,128,0.25)" : "rgba(248,113,113,0.15)"}` }}>
-          <span style={{ fontSize: 13 }}>{v.isValue ? "✅" : "❌"}</span>
-          <span style={{ fontSize: 11, fontWeight: 700, color: v.isValue ? C.green : C.red }}>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 6, background: v.isValue ? GREEN_BG : RED_BG, border: `0.5px solid ${v.isValue ? GREEN_BORDER : RED_BORDER}` }}>
+          <i className={`ti ti-${v.isValue ? "trending-up" : "trending-down"}`} style={{ color: v.isValue ? GREEN : RED, fontSize: 13 }} aria-hidden="true" />
+          <span style={{ fontSize: 11, fontWeight: 500, color: v.isValue ? GREEN : RED }}>
             {v.isValue ? `Value bet · edge +${v.edge.toFixed(1)}%` : `Pas de value · edge ${v.edge.toFixed(1)}%`}
           </span>
         </div>
@@ -284,7 +314,7 @@ function ProbBar({ label, prob, bookOdds, color }) {
   );
 }
 
-// ─── Main App ─────────────────────────────────────────────────────────────
+// ─── Main ─────────────────────────────────────────────────────────────────
 const emptyMatch = () => ({ scoredReal: "", scoredXG: "", concededReal: "", concededXG: "", venue: "home", type: "official", opponent: "" });
 const emptySeason = () => ({ scoredReal: "", scoredXG: "", concededReal: "", concededXG: "" });
 const emptyH2H = () => ({ goalsA: "", goalsB: "" });
@@ -297,22 +327,17 @@ export default function App() {
   const [loadingMsg, setLoadingMsg] = useState("");
   const [error, setError] = useState("");
 
-  // Teams
   const [teamA, setTeamA] = useState(null);
   const [teamB, setTeamB] = useState(null);
-
-  // Step 0
   const [venue, setVenue] = useState("home");
   const [enjeu, setEnjeu] = useState("normal");
 
-  // Matches
   const [matchesA, setMatchesA] = useState(Array.from({ length: 5 }, emptyMatch));
   const [matchesB, setMatchesB] = useState(Array.from({ length: 5 }, emptyMatch));
   const [seasonA, setSeasonA] = useState(emptySeason());
   const [seasonB, setSeasonB] = useState(emptySeason());
   const [activeTeam, setActiveTeam] = useState("A");
 
-  // Context
   const [absentA, setAbsentA] = useState(false);
   const [absentB, setAbsentB] = useState(false);
   const [eloA, setEloA] = useState("");
@@ -322,13 +347,13 @@ export default function App() {
   const [weather, setWeather] = useState("normal");
   const [h2h, setH2H] = useState(Array.from({ length: 5 }, emptyH2H));
 
-  // Market
   const [bookOdds, setBookOdds] = useState({ A: "", draw: "", B: "" });
   const [openOdds, setOpenOdds] = useState({ A: "", draw: "", B: "" });
-
   const [result, setResult] = useState(null);
 
-  // Auto-load team data
+  const nameA = teamA?.name || "Équipe A";
+  const nameB = teamB?.name || "Équipe B";
+
   const loadTeamData = async (team, side) => {
     if (!team || !apiKey) return;
     setLoading(true);
@@ -337,48 +362,36 @@ export default function App() {
       setLoadingMsg(`Chargement des matchs de ${team.name}...`);
       const fixtures = await getLastFixtures(team.id, apiKey, national);
       const mapped = fixtures.map(f => ({
-        scoredReal: String(f.scoredReal),
-        scoredXG: f.scoredXG ? String(f.scoredXG) : String(f.scoredReal),
-        concededReal: String(f.concededReal),
-        concededXG: f.concededXG ? String(f.concededXG) : String(f.concededReal),
-        venue: f.venue,
-        type: f.type,
-        opponent: f.opponent,
+        scoredReal: String(f.scoredReal), scoredXG: String(f.scoredXG ?? f.scoredReal),
+        concededReal: String(f.concededReal), concededXG: String(f.concededXG ?? f.concededReal),
+        venue: f.venue, type: f.type, opponent: f.opponent,
       }));
       while (mapped.length < 5) mapped.push(emptyMatch());
-      if (side === "A") setMatchesA(mapped);
-      else setMatchesB(mapped);
+      if (side === "A") setMatchesA(mapped); else setMatchesB(mapped);
 
       setLoadingMsg(`Chargement fatigue ${team.name}...`);
       const days = await getDaysSinceLastMatch(team.id, apiKey, national);
-      if (days !== null) {
-        if (side === "A") setDaysA(String(days));
-        else setDaysB(String(days));
-      }
+      if (days !== null) { if (side === "A") setDaysA(String(days)); else setDaysB(String(days)); }
     } catch (e) {
       setError(`Erreur chargement ${team.name}: ${e.message}`);
     }
-    setLoading(false);
-    setLoadingMsg("");
+    setLoading(false); setLoadingMsg("");
   };
 
   const loadH2HData = async () => {
     if (!teamA || !teamB || !apiKey) return;
-    setLoading(true);
-    setLoadingMsg("Chargement de l'historique H2H...");
+    setLoading(true); setLoadingMsg("Chargement H2H...");
     try {
       const data = await getH2H(teamA.id, teamB.id, apiKey);
       const mapped = data.map(m => ({ goalsA: String(m.goalsA), goalsB: String(m.goalsB) }));
       while (mapped.length < 5) mapped.push(emptyH2H());
       setH2H(mapped);
-    } catch (e) { /* H2H not critical */ }
-    setLoading(false);
-    setLoadingMsg("");
+    } catch (e) { }
+    setLoading(false); setLoadingMsg("");
   };
 
   const handleTeamSelect = async (team, side) => {
-    if (side === "A") setTeamA(team);
-    else setTeamB(team);
+    if (side === "A") setTeamA(team); else setTeamB(team);
     await loadTeamData(team, side);
   };
 
@@ -389,7 +402,6 @@ export default function App() {
     setStep(1);
   };
 
-  // H2H factor
   function h2hFactor() {
     let wA = 0, wB = 0, valid = 0;
     h2h.forEach(m => {
@@ -410,38 +422,32 @@ export default function App() {
 
   const compute = () => {
     setError("");
-    const formA = weightedFormAvg(matchesA);
-    const formB = weightedFormAvg(matchesB);
+    const formA = weightedFormAvg(matchesA), formB = weightedFormAvg(matchesB);
     const sA = { scoredReal: parseFloat(seasonA.scoredReal), scoredXG: parseFloat(seasonA.scoredXG), concededReal: parseFloat(seasonA.concededReal), concededXG: parseFloat(seasonA.concededXG) };
     const sB = { scoredReal: parseFloat(seasonB.scoredReal), scoredXG: parseFloat(seasonB.scoredXG), concededReal: parseFloat(seasonB.concededReal), concededXG: parseFloat(seasonB.concededXG) };
-    const hasSeasonA = !Object.values(sA).some(isNaN);
-    const hasSeasonB = !Object.values(sB).some(isNaN);
-    const ldA = combinedLambda(formA, hasSeasonA ? sA : null);
-    const ldB = combinedLambda(formB, hasSeasonB ? sB : null);
-    if (!ldA) { setError(`Saisis au moins 1 match pour ${teamA?.name || "Équipe A"}.`); return; }
-    if (!ldB) { setError(`Saisis au moins 1 match pour ${teamB?.name || "Équipe B"}.`); return; }
+    const ldA = combinedLambda(formA, !Object.values(sA).some(isNaN) ? sA : null);
+    const ldB = combinedLambda(formB, !Object.values(sB).some(isNaN) ? sB : null);
+    if (!ldA) { setError(`Saisis au moins 1 match pour ${nameA}.`); return; }
+    if (!ldB) { setError(`Saisis au moins 1 match pour ${nameB}.`); return; }
     const leagueAvg = (ldA.scored + ldB.scored) / 2 || 1;
-    const enjeuF = ENJEU_FACTOR[enjeu];
     const elo = eloFactor(eloA, eloB);
-    const fatA = fatigueFactor(daysA);
-    const fatB = fatigueFactor(daysB);
+    const fatA = fatigueFactor(daysA), fatB = fatigueFactor(daysB);
     const wx = WEATHER_FACTOR[weather];
     const h2hF = h2hFactor();
-    let lA = ((ldA.scored / leagueAvg) * (ldB.conceded / leagueAvg) * leagueAvg + HOME_BONUS[venue]) * enjeuF * elo.factorA * fatA * wx * h2hF.factorA;
-    let lB = ((ldB.scored / leagueAvg) * (ldA.conceded / leagueAvg) * leagueAvg) * enjeuF * elo.factorB * fatB * wx * h2hF.factorB;
+    let lA = ((ldA.scored / leagueAvg) * (ldB.conceded / leagueAvg) * leagueAvg + HOME_BONUS[venue]) * ENJEU_FACTOR[enjeu] * elo.factorA * fatA * wx * h2hF.factorA;
+    let lB = ((ldB.scored / leagueAvg) * (ldA.conceded / leagueAvg) * leagueAvg) * ENJEU_FACTOR[enjeu] * elo.factorB * fatB * wx * h2hF.factorB;
     if (absentA) lA *= 0.85;
     if (absentB) lB *= 0.85;
     lA = Math.max(0.1, lA); lB = Math.max(0.1, lB);
     const res = computeMatch(lA, lB);
-    setResult({ ...res, lambdaA: lA, lambdaB: lB, elo, fatA, fatB, wx, h2hF });
+    setResult({ ...res, lambdaA: lA, lambdaB: lB });
     setShowResults(true);
   };
 
   const reset = () => {
     setStep(0); setShowResults(false); setResult(null); setError("");
     setTeamA(null); setTeamB(null);
-    setMatchesA(Array.from({ length: 5 }, emptyMatch));
-    setMatchesB(Array.from({ length: 5 }, emptyMatch));
+    setMatchesA(Array.from({ length: 5 }, emptyMatch)); setMatchesB(Array.from({ length: 5 }, emptyMatch));
     setSeasonA(emptySeason()); setSeasonB(emptySeason());
     setAbsentA(false); setAbsentB(false);
     setEloA(""); setEloB(""); setDaysA(""); setDaysB("");
@@ -451,57 +457,65 @@ export default function App() {
   };
 
   const top5 = result ? [...result.grid].sort((a, b) => b.p - a.p).slice(0, 5) : [];
-  const nameA = teamA?.name || "Équipe A";
-  const nameB = teamB?.name || "Équipe B";
 
   const ENJEU_OPTS = [["high", "🔥 Fort"], ["normal", "➡️ Normal"], ["low", "😴 Faible"]];
-  const WEATHER_OPTS = [["normal", "☀️"], ["rain", "🌧️"], ["wind", "💨"], ["cold", "🥶"], ["heat", "🥵"]];
+  const WEATHER_OPTS = [["normal", "☀️ Normal"], ["rain", "🌧️ Pluie"], ["wind", "💨 Vent"], ["cold", "🥶 Froid"], ["heat", "🥵 Chaleur"]];
 
   if (!apiKey) return <SetupScreen onSave={setApiKey} />;
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.textMain, fontFamily: "'Inter', system-ui, sans-serif", padding: "18px 14px", maxWidth: 480, margin: "0 auto" }}>
+    <div style={{ minHeight: "100vh", background: GRAY_BG, color: TEXT, fontFamily: "system-ui, sans-serif", padding: "18px 14px", maxWidth: 480, margin: "0 auto" }}>
       {loading && <LoadingOverlay message={loadingMsg} />}
 
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 20 }}>⚽</span>
-          <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em" }}>BetQuant</span>
-          <span style={{ fontSize: 10, fontWeight: 700, background: "rgba(251,146,60,0.15)", color: "#fb923c", padding: "2px 8px", borderRadius: 20, textTransform: "uppercase" }}>V3</span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 36, height: 36, background: GREEN, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <i className="ti ti-ball-football" style={{ color: "#fff", fontSize: 18 }} aria-hidden="true" />
+          </div>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 500, color: TEXT, letterSpacing: "-0.03em" }}>BetQuant</div>
+            <div style={{ fontSize: 10, color: TEXT_MUTED, letterSpacing: "0.05em", textTransform: "uppercase" }}>Analyse quantitative</div>
+          </div>
         </div>
-        <button onClick={() => { localStorage.removeItem("betquant_api_key"); setApiKey(""); }}
-          style={{ fontSize: 10, color: C.textSub, background: "transparent", border: "none", cursor: "pointer" }}>🔑 Changer clé</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 500, background: GREEN_BG, color: GREEN, padding: "3px 10px", borderRadius: 20 }}>V4</span>
+          <button onClick={() => { localStorage.removeItem("betquant_api_key"); setApiKey(""); }}
+            style={{ fontSize: 11, color: TEXT_MUTED, background: "transparent", border: "none", cursor: "pointer", padding: 0 }}>
+            <i className="ti ti-key" style={{ fontSize: 14 }} aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
       {!showResults && <StepBar current={step} />}
 
-      {/* ── STEP 0 : Match + Équipes ── */}
+      {/* ── STEP 0 : Match ── */}
       {!showResults && step === 0 && (
         <>
-          <div style={s.section}>
-            <div style={{ marginBottom: 12 }}>
-              <TeamSearch label={`⚽ ${nameA} (domicile)`} color={C.indigo} selected={teamA} onSelect={t => handleTeamSelect(t, "A")} apiKey={apiKey} />
+          <Card>
+            <TeamSearch label={`Équipe A — domicile`} color={BLUE} colorBg={BLUE_BG} selected={teamA} onSelect={t => handleTeamSelect(t, "A")} apiKey={apiKey} />
+            <TeamSearch label={`Équipe B — extérieur`} color={TEAL} colorBg={TEAL_BG} selected={teamB} onSelect={t => handleTeamSelect(t, "B")} apiKey={apiKey} />
+          </Card>
+
+          <Card>
+            <SectionLabel>📍 Lieu du match</SectionLabel>
+            <TabGroup options={[["home", `🏠 ${nameA} dom.`], ["neutral", "⚖️ Neutre"], ["away", `✈️ ${nameA} ext.`]]} value={venue} onChange={setVenue} color={GREEN} />
+            <div style={{ marginTop: 6, fontSize: 11, color: TEXT_MUTED, fontFamily: "monospace" }}>
+              {venue === "home" ? `→ ${nameA} +0.30 buts` : venue === "away" ? `→ ${nameA} −0.15 buts` : "→ Aucun bonus terrain"}
             </div>
-            <TeamSearch label={`⚽ ${nameB} (extérieur)`} color={C.amber} selected={teamB} onSelect={t => handleTeamSelect(t, "B")} apiKey={apiKey} />
-          </div>
+          </Card>
 
-          <div style={s.section}>
-            <Lbl>📍 Lieu</Lbl>
-            <Tabs options={[[`home`, `🏠 ${nameA} dom.`], ["neutral", "⚖️ Neutre"], ["away", `✈️ ${nameA} ext.`]]} value={venue} onChange={setVenue} color={C.indigo} />
-          </div>
-
-          <div style={s.section}>
-            <Lbl>🎯 Enjeu du match</Lbl>
-            <Tabs options={ENJEU_OPTS} value={enjeu} onChange={setEnjeu} color="#10b981" />
-            <div style={{ marginTop: 6, fontSize: 11, color: C.textMuted, fontFamily: "monospace" }}>
-              {enjeu === "high" ? "→ ×1.05 (élimination, derby, titre)" : enjeu === "low" ? "→ ×0.90 (sans enjeu, rotation)" : "→ ×1.00"}
+          <Card>
+            <SectionLabel>🎯 Enjeu</SectionLabel>
+            <TabGroup options={ENJEU_OPTS} value={enjeu} onChange={setEnjeu} color={GREEN} />
+            <div style={{ marginTop: 6, fontSize: 11, color: TEXT_MUTED, fontFamily: "monospace" }}>
+              {enjeu === "high" ? "→ ×1.05 (élimination, derby, titre)" : enjeu === "low" ? "→ ×0.90 (rotation probable)" : "→ ×1.00"}
             </div>
-          </div>
+          </Card>
 
-          {error && <div style={{ padding: "10px 12px", background: "rgba(248,113,113,0.08)", borderRadius: 8, border: "1px solid rgba(248,113,113,0.2)", marginBottom: 10 }}><span style={{ fontSize: 12, color: C.red }}>⚠️ {error}</span></div>}
+          {error && <div style={{ padding: "10px 12px", background: RED_BG, border: `0.5px solid ${RED_BORDER}`, borderRadius: 8, fontSize: 12, color: RED, marginBottom: 12 }}>⚠ {error}</div>}
 
-          <button onClick={goToContext} style={s.btn("linear-gradient(135deg, #4f46e5, #6366f1)")}>
+          <button onClick={goToContext} style={{ width: "100%", padding: "13px", borderRadius: 10, background: GREEN, color: "#fff", fontWeight: 500, fontSize: 14, border: "none", cursor: "pointer" }}>
             Suivant → Contexte & stats
           </button>
         </>
@@ -511,89 +525,63 @@ export default function App() {
       {!showResults && step === 1 && (
         <>
           {/* Team tabs */}
-          <div style={{ display: "flex", gap: 0, marginBottom: 12, background: C.surface, borderRadius: 10, padding: 3, border: `1px solid ${C.border}` }}>
-            {[["A", nameA, C.indigo], ["B", nameB, C.amber]].map(([key, name, color]) => (
-              <button key={key} onClick={() => setActiveTeam(key)} style={{ flex: 1, padding: "9px", borderRadius: 8, fontSize: 13, fontWeight: 700, border: "none", cursor: "pointer", background: activeTeam === key ? color : "transparent", color: activeTeam === key ? "#fff" : C.textSub }}>
+          <div style={{ display: "flex", gap: 0, marginBottom: 14, background: CARD_BG, borderRadius: 10, padding: 3, border: `0.5px solid ${BORDER}` }}>
+            {[["A", nameA, BLUE], ["B", nameB, TEAL]].map(([key, name, color]) => (
+              <button key={key} onClick={() => setActiveTeam(key)} style={{ flex: 1, padding: "9px", borderRadius: 8, fontSize: 13, fontWeight: activeTeam === key ? 500 : 400, border: "none", cursor: "pointer", background: activeTeam === key ? color : "transparent", color: activeTeam === key ? "#fff" : TEXT_MUTED }}>
                 {name}
               </button>
             ))}
           </div>
 
-          {activeTeam === "A" ? (
-            <>
-              <div style={{ fontSize: 11, color: C.textSub, marginBottom: 8 }}>5 derniers matchs — <span style={{ color: C.indigoLight }}>{nameA}</span></div>
-              {matchesA.map((m, i) => <MatchRow key={i} idx={i} match={m} color={C.indigo} onChange={v => { const n = [...matchesA]; n[i] = v; setMatchesA(n); }} />)}
-              <div style={{ background: C.deep, borderRadius: 8, padding: 10, border: `1px solid ${C.indigo}22`, marginBottom: 8 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.indigo, marginBottom: 8 }}>📊 Moyenne saison <span style={{ color: C.textMuted, fontWeight: 400 }}>· poids ×{SEASON_WEIGHT}</span></div>
+          {[["A", nameA, BLUE, matchesA, setMatchesA, seasonA, setSeasonA, absentA, setAbsentA], ["B", nameB, TEAL, matchesB, setMatchesB, seasonB, setSeasonB, absentB, setAbsentB]].map(([key, name, color, matches, setMatches, season, setSeason, absent, setAbsent]) => activeTeam === key && (
+            <div key={key}>
+              <div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 8 }}>5 derniers matchs — <span style={{ color, fontWeight: 500 }}>{name}</span></div>
+              {matches.map((m, i) => <MatchRow key={i} idx={i} match={m} color={color} onChange={v => { const n = [...matches]; n[i] = v; setMatches(n); }} />)}
+              <Card>
+                <div style={{ fontSize: 11, fontWeight: 500, color, marginBottom: 8 }}>📊 Moyenne saison <span style={{ color: TEXT_MUTED, fontWeight: 400 }}>· poids ×{SEASON_WEIGHT}</span></div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 5 }}>
-                  <div><Lbl>⚽ Mq.</Lbl><Num value={seasonA.scoredReal} onChange={v => setSeasonA(s => ({ ...s, scoredReal: v }))} placeholder="1.7" /></div>
-                  <div><Lbl>📐 xG+</Lbl><Num value={seasonA.scoredXG} onChange={v => setSeasonA(s => ({ ...s, scoredXG: v }))} placeholder="1.9" /></div>
-                  <div><Lbl>🛡️ Enc.</Lbl><Num value={seasonA.concededReal} onChange={v => setSeasonA(s => ({ ...s, concededReal: v }))} placeholder="0.9" /></div>
-                  <div><Lbl>📐 xG-</Lbl><Num value={seasonA.concededXG} onChange={v => setSeasonA(s => ({ ...s, concededXG: v }))} placeholder="1.1" /></div>
+                  <div><div style={{ fontSize: 10, color: TEXT_MUTED, marginBottom: 3 }}>⚽ Mq.</div><NumInput value={season.scoredReal} onChange={v => setSeason(s => ({ ...s, scoredReal: v }))} placeholder="1.7" /></div>
+                  <div><div style={{ fontSize: 10, color: TEXT_MUTED, marginBottom: 3 }}>📐 xG+</div><NumInput value={season.scoredXG} onChange={v => setSeason(s => ({ ...s, scoredXG: v }))} placeholder="1.9" /></div>
+                  <div><div style={{ fontSize: 10, color: TEXT_MUTED, marginBottom: 3 }}>🛡 Enc.</div><NumInput value={season.concededReal} onChange={v => setSeason(s => ({ ...s, concededReal: v }))} placeholder="0.9" /></div>
+                  <div><div style={{ fontSize: 10, color: TEXT_MUTED, marginBottom: 3 }}>📐 xG-</div><NumInput value={season.concededXG} onChange={v => setSeason(s => ({ ...s, concededXG: v }))} placeholder="1.1" /></div>
                 </div>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.deep, borderRadius: 8, padding: "10px 12px", border: `1px solid ${C.border}` }}>
-                <span style={{ fontSize: 13, color: "#94a3b8" }}>🚑 Joueur clé absent (−15%)</span>
-                <button onClick={() => setAbsentA(a => !a)} style={{ padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700, border: `1px solid ${absentA ? C.red : C.border}`, background: absentA ? "rgba(248,113,113,0.15)" : C.surface, color: absentA ? C.red : C.textSub, cursor: "pointer" }}>
-                  {absentA ? "Oui −15%" : "Non"}
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={{ fontSize: 11, color: C.textSub, marginBottom: 8 }}>5 derniers matchs — <span style={{ color: C.amber }}>{nameB}</span></div>
-              {matchesB.map((m, i) => <MatchRow key={i} idx={i} match={m} color={C.amber} onChange={v => { const n = [...matchesB]; n[i] = v; setMatchesB(n); }} />)}
-              <div style={{ background: C.deep, borderRadius: 8, padding: 10, border: `1px solid ${C.amber}22`, marginBottom: 8 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.amber, marginBottom: 8 }}>📊 Moyenne saison <span style={{ color: C.textMuted, fontWeight: 400 }}>· poids ×{SEASON_WEIGHT}</span></div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 5 }}>
-                  <div><Lbl>⚽ Mq.</Lbl><Num value={seasonB.scoredReal} onChange={v => setSeasonB(s => ({ ...s, scoredReal: v }))} placeholder="1.7" /></div>
-                  <div><Lbl>📐 xG+</Lbl><Num value={seasonB.scoredXG} onChange={v => setSeasonB(s => ({ ...s, scoredXG: v }))} placeholder="1.9" /></div>
-                  <div><Lbl>🛡️ Enc.</Lbl><Num value={seasonB.concededReal} onChange={v => setSeasonB(s => ({ ...s, concededReal: v }))} placeholder="0.9" /></div>
-                  <div><Lbl>📐 xG-</Lbl><Num value={seasonB.concededXG} onChange={v => setSeasonB(s => ({ ...s, concededXG: v }))} placeholder="1.1" /></div>
+                <div style={{ borderTop: `0.5px solid ${BORDER}`, marginTop: 10, paddingTop: 10 }}>
+                  <Toggle value={absent} onChange={setAbsent} label="🚑 Joueur clé absent (−15%)" />
                 </div>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: C.deep, borderRadius: 8, padding: "10px 12px", border: `1px solid ${C.border}` }}>
-                <span style={{ fontSize: 13, color: "#94a3b8" }}>🚑 Joueur clé absent (−15%)</span>
-                <button onClick={() => setAbsentB(a => !a)} style={{ padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700, border: `1px solid ${absentB ? C.red : C.border}`, background: absentB ? "rgba(248,113,113,0.15)" : C.surface, color: absentB ? C.red : C.textSub, cursor: "pointer" }}>
-                  {absentB ? "Oui −15%" : "Non"}
-                </button>
-              </div>
-            </>
-          )}
-
-          {/* ELO + Fatigue */}
-          <div style={{ ...s.section, marginTop: 12 }}>
-            <div style={{ marginBottom: 10 }}><Lbl>📊 ELO <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(clubelo.com · optionnel)</span></Lbl></div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-              <div><Lbl>{nameA}</Lbl><Num value={eloA} onChange={setEloA} placeholder="ex: 1820" /></div>
-              <div><Lbl>{nameB}</Lbl><Num value={eloB} onChange={setEloB} placeholder="ex: 1740" /></div>
+              </Card>
             </div>
-            <div style={{ marginBottom: 10 }}><Lbl>😴 Jours depuis dernier match</Lbl></div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-              <div><Lbl>{nameA}</Lbl><Num value={daysA} onChange={setDaysA} placeholder="ex: 3" /></div>
-              <div><Lbl>{nameB}</Lbl><Num value={daysB} onChange={setDaysB} placeholder="ex: 7" /></div>
-            </div>
-            <div style={{ marginBottom: 8 }}><Lbl>🌤️ Météo</Lbl></div>
-            <Tabs options={WEATHER_OPTS} value={weather} onChange={setWeather} color="#0ea5e9" />
-          </div>
+          ))}
 
-          {/* H2H */}
-          <div style={s.section}>
-            <div style={{ marginBottom: 10 }}><Lbl>⚔️ H2H — 5 dernières confrontations</Lbl></div>
+          <Card>
+            <SectionLabel>📊 ELO <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, fontSize: 11 }}>(clubelo.com · optionnel)</span></SectionLabel>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+              <div><div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 4 }}>{nameA}</div><NumInput value={eloA} onChange={setEloA} placeholder="ex: 1820" /></div>
+              <div><div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 4 }}>{nameB}</div><NumInput value={eloB} onChange={setEloB} placeholder="ex: 1740" /></div>
+            </div>
+            <SectionLabel>😴 Jours depuis dernier match</SectionLabel>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+              <div><div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 4 }}>{nameA}</div><NumInput value={daysA} onChange={setDaysA} placeholder="ex: 3" /></div>
+              <div><div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 4 }}>{nameB}</div><NumInput value={daysB} onChange={setDaysB} placeholder="ex: 7" /></div>
+            </div>
+            <SectionLabel>🌤️ Météo</SectionLabel>
+            <TabGroup options={WEATHER_OPTS} value={weather} onChange={setWeather} color="#0ea5e9" />
+          </Card>
+
+          <Card>
+            <SectionLabel>⚔️ H2H — 5 dernières confrontations</SectionLabel>
             {h2h.map((m, i) => (
               <div key={i} style={{ display: "grid", gridTemplateColumns: "auto 1fr auto 1fr", gap: 6, alignItems: "center", marginBottom: 6 }}>
-                <span style={{ fontSize: 11, color: C.textMuted, width: 50 }}>Match {i + 1}</span>
-                <div><Lbl>{nameA}</Lbl><Num value={m.goalsA} onChange={v => { const n = [...h2h]; n[i] = { ...m, goalsA: v }; setH2H(n); }} placeholder="2" /></div>
-                <span style={{ fontSize: 11, color: C.border, textAlign: "center" }}>–</span>
-                <div><Lbl>{nameB}</Lbl><Num value={m.goalsB} onChange={v => { const n = [...h2h]; n[i] = { ...m, goalsB: v }; setH2H(n); }} placeholder="1" /></div>
+                <span style={{ fontSize: 11, color: TEXT_MUTED, width: 48 }}>Match {i + 1}</span>
+                <div><div style={{ fontSize: 10, color: TEXT_MUTED, marginBottom: 3 }}>{nameA}</div><NumInput value={m.goalsA} onChange={v => { const n = [...h2h]; n[i] = { ...m, goalsA: v }; setH2H(n); }} placeholder="2" /></div>
+                <span style={{ fontSize: 11, color: BORDER, textAlign: "center" }}>–</span>
+                <div><div style={{ fontSize: 10, color: TEXT_MUTED, marginBottom: 3 }}>{nameB}</div><NumInput value={m.goalsB} onChange={v => { const n = [...h2h]; n[i] = { ...m, goalsB: v }; setH2H(n); }} placeholder="1" /></div>
               </div>
             ))}
-            {(() => { const f = h2hFactor(); return f.valid > 0 ? <div style={{ marginTop: 8, padding: "8px 10px", background: C.deep, borderRadius: 8, fontSize: 11, color: C.textSub, fontFamily: "monospace" }}>{nameA} {f.winsA}V · {f.draws}N · {f.winsB}D {nameB}</div> : null; })()}
-          </div>
+          </Card>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <button onClick={() => setStep(0)} style={{ ...s.btn("transparent", C.textSub), border: `1px solid ${C.border}` }}>← Retour</button>
-            <button onClick={() => setStep(2)} style={s.btn("linear-gradient(135deg, #4f46e5, #6366f1)")}>Suivant →</button>
+            <button onClick={() => setStep(0)} style={{ padding: "12px", borderRadius: 10, background: CARD_BG, color: TEXT_SUB, fontWeight: 500, fontSize: 13, border: `0.5px solid ${BORDER}`, cursor: "pointer" }}>← Retour</button>
+            <button onClick={() => setStep(2)} style={{ padding: "12px", borderRadius: 10, background: GREEN, color: "#fff", fontWeight: 500, fontSize: 13, border: "none", cursor: "pointer" }}>Suivant →</button>
           </div>
         </>
       )}
@@ -601,33 +589,37 @@ export default function App() {
       {/* ── STEP 2 : Marché ── */}
       {!showResults && step === 2 && (
         <>
-          <div style={s.section}>
-            <div style={{ marginBottom: 10 }}><Lbl>🏦 Cotes actuelles</Lbl></div>
+          <Card>
+            <SectionLabel>🏦 Cotes actuelles</SectionLabel>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-              {[["A", nameA], ["draw", "Nul"], ["B", nameB]].map(([k, l]) => <div key={k}><Lbl>{l}</Lbl><Num value={bookOdds[k]} onChange={v => setBookOdds(o => ({ ...o, [k]: v }))} placeholder="1.80" /></div>)}
+              {[["A", nameA], ["draw", "Nul"], ["B", nameB]].map(([k, l]) => (
+                <div key={k}><div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 4 }}>{l}</div><NumInput value={bookOdds[k]} onChange={v => setBookOdds(o => ({ ...o, [k]: v }))} placeholder="1.80" /></div>
+              ))}
             </div>
-          </div>
+          </Card>
 
-          <div style={s.section}>
-            <div style={{ marginBottom: 10 }}><Lbl>📉 Mouvement de cotes <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(cotes d'ouverture)</span></Lbl></div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
-              {[["A", nameA], ["draw", "Nul"], ["B", nameB]].map(([k, l]) => <div key={k}><Lbl>{l} ouv.</Lbl><Num value={openOdds[k]} onChange={v => setOpenOdds(o => ({ ...o, [k]: v }))} placeholder="2.10" /></div>)}
+          <Card>
+            <SectionLabel>📉 Mouvement de cotes <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, fontSize: 11 }}>(cotes d'ouverture)</span></SectionLabel>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+              {[["A", nameA], ["draw", "Nul"], ["B", nameB]].map(([k, l]) => (
+                <div key={k}><div style={{ fontSize: 11, color: TEXT_MUTED, marginBottom: 4 }}>{l} ouv.</div><NumInput value={openOdds[k]} onChange={v => setOpenOdds(o => ({ ...o, [k]: v }))} placeholder="2.10" /></div>
+              ))}
             </div>
             {["A", "draw", "B"].map(k => {
               const mv = oddsMovement(k);
               if (!mv) return null;
               const label = k === "A" ? nameA : k === "draw" ? "Nul" : nameB;
-              return <div key={k} style={{ fontSize: 11, fontFamily: "monospace", color: mv.dropping ? C.green : mv.rising ? C.red : C.textSub, marginBottom: 3 }}>
-                {mv.dropping ? "📉" : mv.rising ? "📈" : "→"} {label} : {mv.dropping ? `−${mv.move.toFixed(1)}% → argent intelligent ici` : mv.rising ? `+${Math.abs(mv.move).toFixed(1)}% → marché fuit` : "stable"}
+              return <div key={k} style={{ fontSize: 11, color: mv.dropping ? GREEN : mv.rising ? RED : TEXT_MUTED, marginBottom: 3, fontFamily: "monospace" }}>
+                {mv.dropping ? "📉" : mv.rising ? "📈" : "→"} {label} : {mv.dropping ? `−${mv.move.toFixed(1)}% → signal positif` : mv.rising ? `+${Math.abs(mv.move).toFixed(1)}% → signal négatif` : "stable"}
               </div>;
             })}
-          </div>
+          </Card>
 
-          {error && <div style={{ padding: "10px 12px", background: "rgba(248,113,113,0.08)", borderRadius: 8, border: "1px solid rgba(248,113,113,0.2)", marginBottom: 10 }}><span style={{ fontSize: 12, color: C.red }}>⚠️ {error}</span></div>}
+          {error && <div style={{ padding: "10px 12px", background: RED_BG, border: `0.5px solid ${RED_BORDER}`, borderRadius: 8, fontSize: 12, color: RED, marginBottom: 12 }}>⚠ {error}</div>}
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <button onClick={() => setStep(1)} style={{ ...s.btn("transparent", C.textSub), border: `1px solid ${C.border}` }}>← Retour</button>
-            <button onClick={compute} style={s.btn("linear-gradient(135deg, #059669, #10b981)")}>Calculer →</button>
+            <button onClick={() => setStep(1)} style={{ padding: "12px", borderRadius: 10, background: CARD_BG, color: TEXT_SUB, fontWeight: 500, fontSize: 13, border: `0.5px solid ${BORDER}`, cursor: "pointer" }}>← Retour</button>
+            <button onClick={compute} style={{ padding: "12px", borderRadius: 10, background: GREEN, color: "#fff", fontWeight: 500, fontSize: 13, border: "none", cursor: "pointer" }}>Calculer →</button>
           </div>
         </>
       )}
@@ -635,85 +627,104 @@ export default function App() {
       {/* ── RESULTS ── */}
       {showResults && result && (
         <>
-          <div style={{ background: C.surface, borderRadius: 10, padding: "10px 14px", marginBottom: 12, border: `1px solid ${C.border}` }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                {teamA?.logo && <img src={teamA.logo} alt="" style={{ width: 18, height: 18, objectFit: "contain" }} />}
-                <span style={{ color: C.indigoLight, fontWeight: 700 }}>{nameA}</span>
+          {/* Match header */}
+          <Card style={{ marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {teamA?.logo && <img src={teamA.logo} alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />}
+                <span style={{ fontSize: 14, fontWeight: 500, color: BLUE }}>{nameA}</span>
               </div>
-              <span style={{ color: C.textSub, fontSize: 11 }}>VS</span>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ color: C.amber, fontWeight: 700 }}>{nameB}</span>
-                {teamB?.logo && <img src={teamB.logo} alt="" style={{ width: 18, height: 18, objectFit: "contain" }} />}
+              <span style={{ fontSize: 11, color: TEXT_MUTED, padding: "3px 10px", background: GRAY_BG, borderRadius: 6 }}>VS</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 14, fontWeight: 500, color: TEAL }}>{nameB}</span>
+                {teamB?.logo && <img src={teamB.logo} alt="" style={{ width: 24, height: 24, objectFit: "contain" }} />}
               </div>
             </div>
-          </div>
+          </Card>
 
+          {/* Lambda */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-            {[{ label: nameA, val: result.lambdaA, color: C.indigo }, { label: nameB, val: result.lambdaB, color: C.amber }].map(({ label, val, color }) => (
-              <div key={label} style={{ background: C.surface, borderRadius: 10, padding: 12, border: `1px solid ${C.border}`, textAlign: "center" }}>
-                <div style={{ fontSize: 9, color: C.textSub, fontWeight: 700, textTransform: "uppercase", marginBottom: 3 }}>λ {label}</div>
-                <div style={{ fontSize: 26, fontWeight: 800, color, fontFamily: "monospace" }}>{val.toFixed(2)}</div>
-                <div style={{ fontSize: 9, color: C.textMuted }}>buts attendus</div>
+            {[{ label: nameA, val: result.lambdaA, color: BLUE }, { label: nameB, val: result.lambdaB, color: TEAL }].map(({ label, val, color }) => (
+              <div key={label} style={{ background: CARD_BG, border: `0.5px solid ${BORDER}`, borderRadius: 12, padding: 12, textAlign: "center" }}>
+                <div style={{ fontSize: 10, color: TEXT_MUTED, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.06em" }}>λ {label}</div>
+                <div style={{ fontSize: 26, fontWeight: 500, color, fontFamily: "monospace" }}>{val.toFixed(2)}</div>
+                <div style={{ fontSize: 10, color: TEXT_MUTED }}>buts attendus</div>
               </div>
             ))}
           </div>
 
-          <div style={s.section}>
-            <div style={{ marginBottom: 12 }}><Lbl>📈 Probabilités & Value bets</Lbl></div>
-            <ProbBar label={`Victoire ${nameA}`} prob={result.winA} bookOdds={bookOdds.A} color={C.indigo} />
+          {/* Probabilities */}
+          <Card>
+            <SectionLabel>📈 Probabilités & value bets</SectionLabel>
+            <ProbBar label={`Victoire ${nameA}`} prob={result.winA} bookOdds={bookOdds.A} color={BLUE} />
             <ProbBar label="Match nul" prob={result.draw} bookOdds={bookOdds.draw} color="#94a3b8" />
-            <ProbBar label={`Victoire ${nameB}`} prob={result.winB} bookOdds={bookOdds.B} color={C.amber} />
-          </div>
+            <ProbBar label={`Victoire ${nameB}`} prob={result.winB} bookOdds={bookOdds.B} color={TEAL} />
+          </Card>
 
-          <div style={s.section}>
-            <div style={{ marginBottom: 10 }}><Lbl>🎯 Scores les plus probables</Lbl></div>
+          {/* Top 5 scores */}
+          <Card>
+            <SectionLabel>🎯 Scores les plus probables</SectionLabel>
             {top5.map(({ i, j, p }, idx) => (
-              <div key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: idx < 4 ? `1px solid ${C.deep}` : "none" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 10, color: "#1e3a5f", width: 14 }}>{idx + 1}.</span>
-                  <span style={{ fontFamily: "monospace", fontWeight: 800, fontSize: 15 }}>{i} – {j}</span>
-                  <span style={{ fontSize: 10, color: C.textMuted }}>{i > j ? nameA : i === j ? "Nul" : nameB}</span>
+              <div key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: idx < 4 ? `0.5px solid ${BORDER}` : "none" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 11, color: TEXT_MUTED, width: 14 }}>{idx + 1}.</span>
+                  <span style={{ fontFamily: "monospace", fontWeight: 500, fontSize: 15, color: TEXT }}>{i} – {j}</span>
+                  <span style={{ fontSize: 11, color: TEXT_MUTED }}>{i > j ? nameA : i === j ? "Nul" : nameB}</span>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <div style={{ background: C.border, borderRadius: 3, height: 4, width: 44, overflow: "hidden" }}>
-                    <div style={{ width: `${(p / top5[0].p) * 100}%`, height: "100%", background: C.indigo, borderRadius: 3 }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ background: BAR_BG, borderRadius: 3, height: 4, width: 44, overflow: "hidden" }}>
+                    <div style={{ width: `${(p / top5[0].p) * 100}%`, height: "100%", background: GREEN, borderRadius: 3 }} />
                   </div>
-                  <span style={{ fontFamily: "monospace", fontSize: 12, color: C.textSub, minWidth: 34, textAlign: "right" }}>{(p * 100).toFixed(1)}%</span>
+                  <span style={{ fontFamily: "monospace", fontSize: 12, color: TEXT_SUB, minWidth: 36, textAlign: "right" }}>{(p * 100).toFixed(1)}%</span>
                 </div>
               </div>
             ))}
-          </div>
+          </Card>
 
           {/* Verdict */}
           {(() => {
-            const values = [];
-            [["A", result.winA, nameA], ["draw", result.draw, "Match nul"], ["B", result.winB, nameB]].forEach(([k, prob, label]) => {
-              const v = valueInfo(prob, bookOdds[k]);
-              if (v && v.isValue) values.push({ label, edge: v.edge, prob });
-            });
-            values.sort((a, b) => b.edge - a.edge);
+            const values = [["A", result.winA, nameA], ["draw", result.draw, "Match nul"], ["B", result.winB, nameB]]
+              .map(([k, prob, label]) => { const v = valueInfo(prob, bookOdds[k]); return v && v.isValue ? { label, edge: v.edge, prob } : null; })
+              .filter(Boolean).sort((a, b) => b.edge - a.edge);
             return (
-              <div style={{ background: values.length > 0 ? "rgba(74,222,128,0.07)" : "rgba(100,116,139,0.07)", borderRadius: 12, padding: 16, marginBottom: 14, border: `1px solid ${values.length > 0 ? "rgba(74,222,128,0.2)" : C.border}` }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: values.length > 0 ? C.green : C.textSub, marginBottom: 10 }}>
-                  {values.length > 0 ? "🎯 VERDICT — Value bet(s) détecté(s)" : "🔍 VERDICT — Aucune value détectée"}
+              <div style={{ background: values.length > 0 ? GREEN_LIGHT : GRAY_BG, border: `0.5px solid ${values.length > 0 ? GREEN_BORDER : BORDER}`, borderRadius: 12, padding: 14, marginBottom: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 500, color: values.length > 0 ? GREEN : TEXT_SUB, marginBottom: values.length > 0 ? 10 : 0, display: "flex", alignItems: "center", gap: 6 }}>
+                  <i className={`ti ti-${values.length > 0 ? "target" : "search"}`} aria-hidden="true" />
+                  {values.length > 0 ? "Verdict — value bet détecté" : "Verdict — aucune value détectée"}
                 </div>
                 {values.map((v, i) => (
-                  <div key={i} style={{ background: "rgba(74,222,128,0.1)", borderRadius: 8, padding: "8px 12px", marginBottom: 6 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: C.green }}>✅ {v.label}</div>
-                    <div style={{ fontSize: 11, color: "#86efac", fontFamily: "monospace" }}>Prob. modèle : {(v.prob * 100).toFixed(1)}% · Edge : +{v.edge.toFixed(1)}%</div>
+                  <div key={i} style={{ background: CARD_BG, border: `0.5px solid ${GREEN_BORDER}`, borderRadius: 8, padding: "10px 12px", marginBottom: 6 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500, color: GREEN }}>{v.label}</div>
+                    <div style={{ fontSize: 11, color: GREEN, marginTop: 2 }}>Prob. modèle {(v.prob * 100).toFixed(1)}% · Edge +{v.edge.toFixed(1)}%</div>
                   </div>
                 ))}
-                {values.length === 0 && !bookOdds.A && <div style={{ fontSize: 11, color: C.textSub }}>Renseigne les cotes pour détecter les value bets.</div>}
+                {values.length === 0 && !bookOdds.A && <div style={{ fontSize: 11, color: TEXT_MUTED, marginTop: 4 }}>Renseigne les cotes pour détecter les value bets.</div>}
               </div>
             );
           })()}
 
-          <button onClick={reset} style={{ ...s.btn("transparent", C.textSub), border: `1px solid ${C.border}` }}>← Nouveau match</button>
+          {/* Odds movement */}
+          {["A", "draw", "B"].some(k => oddsMovement(k)) && (
+            <Card>
+              <SectionLabel>📉 Signaux marché</SectionLabel>
+              {["A", "draw", "B"].map(k => {
+                const mv = oddsMovement(k);
+                if (!mv) return null;
+                const label = k === "A" ? nameA : k === "draw" ? "Nul" : nameB;
+                return <div key={k} style={{ fontSize: 12, color: mv.dropping ? GREEN : mv.rising ? RED : TEXT_SUB, marginBottom: 4, fontFamily: "monospace" }}>
+                  {mv.dropping ? "📉" : mv.rising ? "📈" : "→"} {label} : {mv.dropping ? `cote en baisse ${mv.move.toFixed(1)}% → signal positif` : `cote en hausse ${Math.abs(mv.move).toFixed(1)}% → signal négatif`}
+                </div>;
+              })}
+            </Card>
+          )}
+
+          <button onClick={reset} style={{ width: "100%", padding: "12px", borderRadius: 10, background: CARD_BG, color: TEXT_SUB, fontWeight: 500, fontSize: 14, border: `0.5px solid ${BORDER}`, cursor: "pointer" }}>
+            ← Nouveau match
+          </button>
         </>
       )}
 
-      <p style={{ textAlign: "center", fontSize: 10, color: C.deep, marginTop: 18 }}>BetQuant V3 · Usage personnel</p>
+      <div style={{ textAlign: "center", fontSize: 10, color: TEXT_MUTED, marginTop: 20, opacity: 0.5 }}>BetQuant V4 · Usage personnel</div>
     </div>
   );
 }

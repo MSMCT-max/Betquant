@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import Tracker from "./Tracker.jsx";
 import { searchTeams, getLastFixtures, getH2H, getDaysSinceLastMatch, validateApiKey } from "./api.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────
@@ -321,6 +322,7 @@ const emptyH2H = () => ({ goalsA: "", goalsB: "" });
 
 export default function App() {
   const [apiKey, setApiKey] = useState(() => localStorage.getItem("betquant_api_key") || "");
+  const [mainTab, setMainTab] = useState("analyse");
   const [step, setStep] = useState(0);
   const [showResults, setShowResults] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -486,6 +488,19 @@ export default function App() {
           </button>
         </div>
       </div>
+
+      {/* Main nav tabs */}
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, background: CARD_BG, borderRadius: 10, padding: 3, border: `0.5px solid ${BORDER}` }}>
+        {[["analyse", "Analyser"], ["tracker", "Tracker"]].map(([k, l]) => (
+          <button key={k} onClick={() => setMainTab(k)} style={{ flex: 1, padding: "9px", borderRadius: 8, fontSize: 13, fontWeight: mainTab === k ? 500 : 400, border: "none", cursor: "pointer", background: mainTab === k ? GREEN : "transparent", color: mainTab === k ? "#fff" : TEXT_MUTED }}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {mainTab === "tracker" && <Tracker prefillMatch={teamA && teamB ? `${teamA.name} — ${teamB.name}` : ""} />}
+
+      {mainTab === "analyse" && <>
 
       {!showResults && <StepBar current={step} />}
 
@@ -723,6 +738,8 @@ export default function App() {
           </button>
         </>
       )}
+
+      </>}
 
       <div style={{ textAlign: "center", fontSize: 10, color: TEXT_MUTED, marginTop: 20, opacity: 0.5 }}>BetQuant V4 · Usage personnel</div>
     </div>

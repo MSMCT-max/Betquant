@@ -14,25 +14,21 @@ async function apiCall(endpoint, params, apiKey) {
   return data.response;
 }
 
-// Detect if a team is a national team based on search results
-function isNationalTeam(teamData) {
-  return teamData.team?.national === true;
-}
-
-// Get current season for clubs vs national teams
-function getCurrentSeason(national = false) {
+// Get seasons to try in order of preference
+function getSeasons(national = false) {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth() + 1;
   if (national) {
-    // World Cup 2026 is in 2026
-    return year >= 2026 ? 2026 : 2025;
+    return year >= 2026 ? [2026, 2025] : [2025, 2024];
   }
   // Club football: season starts in August
-  return month >= 8 ? year : year - 1;
+  // En juin 2026, la saison en cours est 2025 (commencée août 2025)
+  const current = month >= 8 ? year : year - 1;
+  return [current, current - 1, current - 2];
 }
 
-// Search teams by name — returns club + national results
+// Search teams by name
 export async function searchTeams(name, apiKey) {
   const results = await apiCall('/teams', { search: name }, apiKey);
   return results.map(r => ({
@@ -44,21 +40,17 @@ export async function searchTeams(name, apiKey) {
   }));
 }
 
-// Get fixtures for a team using season (no "last" param — free plan compatible)
+// Get fixtures for a team using season
 async function getFixturesBySeason(teamId, season, apiKey) {
   const results = await apiCall('/fixtures', {
     team: teamId,
     season: season,
     status: 'FT-AET-PEN',
   }, apiKey);
-
-  // Sort by date descending → most recent first
-  return results.sort((a, b) =>
-    new Date(b.fixture.date) - new Date(a.fixture.date)
-  );
+  return results.sort((a, b) => new Date(b.fixture.date) - new Date(a.fixture.date));
 }
 
-// Try to get xG for a fixture (may fail silently)
+// Try to get xG for a fixture
 async function getFixtureXG(fixtureId, teamId, apiKey) {
   try {
     const stats = await apiCall('/fixtures/statistics', { fixture: fixtureId }, apiKey);
@@ -66,15 +58,11 @@ async function getFixtureXG(fixtureId, teamId, apiKey) {
     const oppStats = stats.find(s => s.team.id !== teamId);
     let scoredXG = null, concededXG = null;
     if (teamStats) {
-      const xg = teamStats.statistics.find(s =>
-        s.type === 'expected_goals' || s.type === 'Expected Goals'
-      );
+      const xg = teamStats.statistics.find(s => s.type === 'expected_goals' || s.type === 'Expected Goals');
       if (xg?.value) scoredXG = parseFloat(xg.value);
     }
     if (oppStats) {
-      const xg = oppStats.statistics.find(s =>
-        s.type === 'expected_goals' || s.type === 'Expected Goals'
-      );
+      const xg = oppStats.statistics.find(s => s.type === 'expected_goals' || s.type === 'Expected Goals');
       if (xg?.value) concededXG = parseFloat(xg.value);
     }
     return { scoredXG, concededXG };
@@ -93,29 +81,26 @@ function getMatchType(leagueName) {
   return 'official';
 }
 
-// Main function: get last 5 fixtures — free plan compatible
+// Main function: get last 5 fixtures — tries multiple seasons
 export async function getLastFixtures(teamId, apiKey, national = false) {
-  const currentSeason = getCurrentSeason(national);
-  let fixtures = [];
+  const seasons = getSeasons(national);
+  let allFixtures = [];
 
-  // Try current season first
-  try {
-    fixtures = await getFixturesBySeason(teamId, currentSeason, apiKey);
-  } catch (e) {
-    // If current season fails, try previous
-    fixtures = await getFixturesBySeason(teamId, currentSeason - 1, apiKey);
-  }
-
-  // If not enough matches in current season, supplement with previous season
-  if (fixtures.length < 5) {
+  for (const season of seasons) {
     try {
-      const prevFixtures = await getFixturesBySeason(teamId, currentSeason - 1, apiKey);
-      fixtures = [...fixtures, ...prevFixtures];
-    } catch (e) { /* ignore */ }
+      const fixtures = await getFixturesBySeason(teamId, season, apiKey);
+      if (fixtures.length > 0) {
+        allFixtures = [...allFixtures, ...fixtures];
+        // If we have enough, stop
+        if (allFixtures.length >= 5) break;
+      }
+    } catch (e) {
+      // Try next season
+    }
   }
 
   // Take 5 most recent
-  const recent = fixtures.slice(0, 5);
+  const recent = allFixtures.slice(0, 5);
   const result = [];
 
   for (const f of recent) {
@@ -125,7 +110,6 @@ export async function getLastFixtures(teamId, apiKey, national = false) {
     const venue = isHome ? 'home' : 'away';
     const type = getMatchType(f.league.name);
 
-    // Try to get xG (uses 1 API request per fixture — skip if short on quota)
     const { scoredXG, concededXG } = await getFixtureXG(f.fixture.id, teamId, apiKey);
 
     result.push({
@@ -145,47 +129,47 @@ export async function getLastFixtures(teamId, apiKey, national = false) {
   return result;
 }
 
-// Get season averages — find the right league automatically
+// Get season averages
 export async function getSeasonStats(teamId, apiKey, national = false) {
-  const season = getCurrentSeason(national);
+  const seasons = getSeasons(national);
 
-  // Get all leagues this team played in this season
-  try {
-    const leagues = await apiCall('/leagues', { team: teamId, season }, apiKey);
-    if (!leagues || leagues.length === 0) return null;
+  for (const season of seasons) {
+    try {
+      const leagues = await apiCall('/leagues', { team: teamId, season }, apiKey);
+      if (!leagues || leagues.length === 0) continue;
 
-    // Pick most important league
-    const league = leagues.find(l =>
-      l.league.type === 'League'
-    ) || leagues[0];
+      const league = leagues.find(l => l.league.type === 'League') || leagues[0];
+      const stats = await apiCall('/teams/statistics', {
+        team: teamId,
+        league: league.league.id,
+        season,
+      }, apiKey);
 
-    const stats = await apiCall('/teams/statistics', {
-      team: teamId,
-      league: league.league.id,
-      season,
-    }, apiKey);
+      if (!stats || !stats.goals) continue;
 
-    if (!stats || !stats.goals) return null;
+      const played = stats.fixtures?.played?.total || 1;
+      const scoredTotal = stats.goals?.for?.total?.total || 0;
+      const concededTotal = stats.goals?.against?.total?.total || 0;
 
-    const played = stats.fixtures?.played?.total || 1;
-    const scoredTotal = stats.goals?.for?.total?.total || 0;
-    const concededTotal = stats.goals?.against?.total?.total || 0;
-
-    return {
-      scoredReal: scoredTotal / played,
-      scoredXG: scoredTotal / played,
-      concededReal: concededTotal / played,
-      concededXG: concededTotal / played,
-    };
-  } catch (e) {
-    return null;
+      if (played > 0) {
+        return {
+          scoredReal: scoredTotal / played,
+          scoredXG: scoredTotal / played,
+          concededReal: concededTotal / played,
+          concededXG: concededTotal / played,
+          season,
+        };
+      }
+    } catch (e) {
+      // Try next season
+    }
   }
+  return null;
 }
 
-// Get H2H — free plan compatible (use season instead of last)
+// Get H2H
 export async function getH2H(teamAId, teamBId, apiKey) {
   try {
-    // H2H endpoint doesn't use "last" — it uses "h2h" param directly
     const results = await apiCall('/fixtures/headtohead', {
       h2h: `${teamAId}-${teamBId}`,
       status: 'FT-AET-PEN',
@@ -205,15 +189,19 @@ export async function getH2H(teamAId, teamBId, apiKey) {
   }
 }
 
-// Get days since last match — free plan compatible
+// Get days since last match
 export async function getDaysSinceLastMatch(teamId, apiKey, national = false) {
   try {
-    const season = getCurrentSeason(national);
-    const fixtures = await getFixturesBySeason(teamId, season, apiKey);
-    if (!fixtures || fixtures.length === 0) return null;
-    const lastDate = new Date(fixtures[0].fixture.date);
-    const now = new Date();
-    return Math.floor((now - lastDate) / (1000 * 60 * 60 * 24));
+    const seasons = getSeasons(national);
+    for (const season of seasons) {
+      const fixtures = await getFixturesBySeason(teamId, season, apiKey);
+      if (fixtures && fixtures.length > 0) {
+        const lastDate = new Date(fixtures[0].fixture.date);
+        const now = new Date();
+        return Math.floor((now - lastDate) / (1000 * 60 * 60 * 24));
+      }
+    }
+    return null;
   } catch (e) {
     return null;
   }

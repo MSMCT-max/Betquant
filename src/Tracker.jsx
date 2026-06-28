@@ -138,10 +138,12 @@ export default function Tracker({ prefillMatch, prefillEdge, prefillOdds, prefil
     const gain = result === "win" ? parseFloat(((o - 1) * s).toFixed(2)) : result === "lose" ? -s : 0;
     const newBet = { id: Date.now(), date: new Date().toLocaleDateString("fr-FR"), match, comp: comp || "—", type: betType, odds: o, stake: s, edge: isNaN(e) ? null : e, result, gain, bankrollBefore: bankroll.current };
 
-    // Update bankroll
-    let newCurrent = bankroll.current;
-    if (result === "win") newCurrent = parseFloat((bankroll.current + gain).toFixed(2));
-    else if (result === "lose") newCurrent = parseFloat((bankroll.current - s).toFixed(2));
+    // Update bankroll — mise toujours déduite immédiatement (argent engagé)
+    // En attente : bankroll - mise
+    // Gagné : bankroll - mise + (cote × mise) = bankroll + gain net
+    // Perdu : bankroll - mise
+    let newCurrent = parseFloat((bankroll.current - s).toFixed(2));
+    if (result === "win") newCurrent = parseFloat((bankroll.current - s + (o * s)).toFixed(2));
     const newBankroll = { ...bankroll, current: Math.max(0, newCurrent) };
 
     const newBets = [newBet, ...bets];
@@ -157,9 +159,11 @@ export default function Tracker({ prefillMatch, prefillEdge, prefillOdds, prefil
     if (!bet || bet.result !== "pending") return;
     const o = bet.odds, s = bet.stake;
     const gain = newResult === "win" ? parseFloat(((o - 1) * s).toFixed(2)) : -s;
+    // La mise est DÉJÀ déduite de la bankroll lors de l'enregistrement
+    // En attente → Gagné : on rembourse la mise + on ajoute le gain = on crédite cote × mise
+    // En attente → Perdu : rien à faire, la mise est déjà déduite
     let newCurrent = bankroll.current;
-    if (newResult === "win") newCurrent = parseFloat((bankroll.current + gain).toFixed(2));
-    else if (newResult === "lose") newCurrent = parseFloat((bankroll.current - s).toFixed(2));
+    if (newResult === "win") newCurrent = parseFloat((bankroll.current + (o * s)).toFixed(2));
     const newBankroll = { ...bankroll, current: Math.max(0, newCurrent) };
     const newBets = bets.map(b => b.id === id ? { ...b, result: newResult, gain } : b);
     setBets(newBets); saveBets(newBets);
@@ -169,10 +173,13 @@ export default function Tracker({ prefillMatch, prefillEdge, prefillOdds, prefil
   const deleteBet = (id) => {
     const bet = bets.find(b => b.id === id);
     if (!bet) return;
-    // Reverse bankroll effect
+    // Inverse l'effet sur la bankroll selon le statut
+    // Gagné : on avait crédité cote×mise → on retire cote×mise
+    // Perdu : on avait déduit la mise → on rembourse la mise
+    // En attente : on avait déduit la mise → on rembourse la mise
     let newCurrent = bankroll.current;
-    if (bet.result === "win") newCurrent = parseFloat((bankroll.current - bet.gain).toFixed(2));
-    else if (bet.result === "lose") newCurrent = parseFloat((bankroll.current + bet.stake).toFixed(2));
+    if (bet.result === "win") newCurrent = parseFloat((bankroll.current - (bet.odds * bet.stake)).toFixed(2));
+    else newCurrent = parseFloat((bankroll.current + bet.stake).toFixed(2));
     const newBankroll = { ...bankroll, current: Math.max(0, newCurrent) };
     const newBets = bets.filter(b => b.id !== id);
     setBets(newBets); saveBets(newBets);
@@ -194,7 +201,8 @@ export default function Tracker({ prefillMatch, prefillEdge, prefillOdds, prefil
   const losses = bets.filter(b => b.result === "lose");
   const pending = bets.filter(b => b.result === "pending");
   const totalStake = bets.reduce((s, b) => s + b.stake, 0);
-  const profit = resolved.reduce((s, b) => s + b.gain, 0);
+  // Profit = bankroll actuelle - bankroll de départ (inclut paris en attente)
+  const profit = parseFloat((bankroll.current - bankroll.start).toFixed(2));
   const roi = totalStake > 0 ? (profit / totalStake * 100) : null;
   const winRate = resolved.length > 0 ? (wins.length / resolved.length * 100) : null;
   const avgEdge = bets.filter(b => b.edge).length > 0 ? bets.filter(b => b.edge).reduce((s, b) => s + b.edge, 0) / bets.filter(b => b.edge).length : null;

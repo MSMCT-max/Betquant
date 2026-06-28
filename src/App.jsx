@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import Tracker from "./Tracker.jsx";
+import Scout from "./Scout.jsx";
 import { searchTeams, getLastFixtures, getH2H, getDaysSinceLastMatch, validateApiKey } from "./api.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────
@@ -491,7 +492,7 @@ export default function App() {
 
       {/* Main nav tabs */}
       <div style={{ display: "flex", gap: 0, marginBottom: 16, background: CARD_BG, borderRadius: 10, padding: 3, border: `0.5px solid ${BORDER}` }}>
-        {[["analyse", "Analyser"], ["tracker", "Tracker"]].map(([k, l]) => (
+        {[["analyse", "Analyser"], ["scout", "Scout"], ["tracker", "Tracker"]].map(([k, l]) => (
           <button key={k} onClick={() => setMainTab(k)} style={{ flex: 1, padding: "9px", borderRadius: 8, fontSize: 13, fontWeight: mainTab === k ? 500 : 400, border: "none", cursor: "pointer", background: mainTab === k ? GREEN : "transparent", color: mainTab === k ? "#fff" : TEXT_MUTED }}>
             {l}
           </button>
@@ -499,6 +500,50 @@ export default function App() {
       </div>
 
       {mainTab === "tracker" && <Tracker prefillMatch={teamA && teamB ? `${teamA.name} — ${teamB.name}` : ""} />}
+
+      {mainTab === "scout" && <Scout onImport={(data) => {
+        // Import Scout data into analyse form
+        if (data.teamA) setTeamA({ id: 0, name: data.teamA.name, national: data.teamA.national, logo: null });
+        if (data.teamB) setTeamB({ id: 0, name: data.teamB.name, national: data.teamB.national, logo: null });
+        if (data.venue) setVenue(data.venue);
+        if (data.enjeu) setEnjeu(data.enjeu);
+        if (data.teamA?.matches) {
+          setMatchesA(data.teamA.matches.map(m => ({
+            scoredReal: String(m.scoredReal ?? ""),
+            scoredXG: String(m.scoredXG ?? m.scoredReal ?? ""),
+            concededReal: String(m.concededReal ?? ""),
+            concededXG: String(m.concededXG ?? m.concededReal ?? ""),
+            venue: m.venue || "home",
+            type: m.type || "official",
+            opponent: m.opponent || "",
+          })));
+        }
+        if (data.teamB?.matches) {
+          setMatchesB(data.teamB.matches.map(m => ({
+            scoredReal: String(m.scoredReal ?? ""),
+            scoredXG: String(m.scoredXG ?? m.scoredReal ?? ""),
+            concededReal: String(m.concededReal ?? ""),
+            concededXG: String(m.concededXG ?? m.concededReal ?? ""),
+            venue: m.venue || "home",
+            type: m.type || "official",
+            opponent: m.opponent || "",
+          })));
+        }
+        if (data.teamA?.season) setSeasonA({ scoredReal: String(data.teamA.season.scoredReal || ""), scoredXG: String(data.teamA.season.scoredXG || ""), concededReal: String(data.teamA.season.concededReal || ""), concededXG: String(data.teamA.season.concededXG || "") });
+        if (data.teamB?.season) setSeasonB({ scoredReal: String(data.teamB.season.scoredReal || ""), scoredXG: String(data.teamB.season.scoredXG || ""), concededReal: String(data.teamB.season.concededReal || ""), concededXG: String(data.teamB.season.concededXG || "") });
+        if (data.teamA?.elo) setEloA(String(data.teamA.elo));
+        if (data.teamB?.elo) setEloB(String(data.teamB.elo));
+        if (data.teamA?.daysSinceLastMatch) setDaysA(String(data.teamA.daysSinceLastMatch));
+        if (data.teamB?.daysSinceLastMatch) setDaysB(String(data.teamB.daysSinceLastMatch));
+        if (data.teamA?.absentPlayers) setAbsentA(true);
+        if (data.teamB?.absentPlayers) setAbsentB(true);
+        if (data.weather) setWeather(data.weather);
+        if (data.h2h) setH2H(data.h2h.map(m => ({ goalsA: String(m.goalsA ?? ""), goalsB: String(m.goalsB ?? "") })));
+        if (data.odds) setBookOdds({ A: String(data.odds.A || ""), draw: String(data.odds.draw || ""), B: String(data.odds.B || "") });
+        setMainTab("analyse");
+        setStep(0);
+        setShowResults(false);
+      }} />}
 
       {mainTab === "analyse" && <>
 

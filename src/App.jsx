@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import Tracker from "./Tracker.jsx";
 import Scout from "./Scout.jsx";
+import PasteImport from "./PasteImport.jsx";
 import { searchTeams, getLastFixtures, getH2H, getDaysSinceLastMatch, validateApiKey } from "./api.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────
@@ -492,7 +493,7 @@ export default function App() {
 
       {/* Main nav tabs */}
       <div style={{ display: "flex", gap: 0, marginBottom: 16, background: CARD_BG, borderRadius: 10, padding: 3, border: `0.5px solid ${BORDER}` }}>
-        {[["analyse", "Analyser"], ["scout", "Scout"], ["tracker", "Tracker"]].map(([k, l]) => (
+        {[["analyse", "Analyser"], ["scout", "Scout"], ["coller", "Coller"], ["tracker", "Tracker"]].map(([k, l]) => (
           <button key={k} onClick={() => setMainTab(k)} style={{ flex: 1, padding: "9px", borderRadius: 8, fontSize: 13, fontWeight: mainTab === k ? 500 : 400, border: "none", cursor: "pointer", background: mainTab === k ? GREEN : "transparent", color: mainTab === k ? "#fff" : TEXT_MUTED }}>
             {l}
           </button>
@@ -500,6 +501,29 @@ export default function App() {
       </div>
 
       {mainTab === "tracker" && <Tracker prefillMatch={teamA && teamB ? `${teamA.name} — ${teamB.name}` : ""} />}
+
+      {mainTab === "coller" && <PasteImport onImport={(data) => {
+        if (data.teamAName) setTeamA({ id: 0, name: data.teamAName, national: false, logo: null });
+        if (data.teamBName) setTeamB({ id: 0, name: data.teamBName, national: false, logo: null });
+        if (data.venue) setVenue(data.venue);
+        if (data.enjeu) setEnjeu(data.enjeu);
+        if (data.matchesA) setMatchesA(data.matchesA.map(m => ({ ...m, opponent: m.opponent || "" })));
+        if (data.matchesB) setMatchesB(data.matchesB.map(m => ({ ...m, opponent: m.opponent || "" })));
+        if (data.seasonA) setSeasonA(data.seasonA);
+        if (data.seasonB) setSeasonB(data.seasonB);
+        if (data.eloA) setEloA(data.eloA);
+        if (data.eloB) setEloB(data.eloB);
+        if (data.daysA) setDaysA(data.daysA);
+        if (data.daysB) setDaysB(data.daysB);
+        if (data.absentA) setAbsentA(true);
+        if (data.absentB) setAbsentB(true);
+        if (data.weather) setWeather(data.weather);
+        if (data.h2h) setH2H(data.h2h);
+        if (data.bookOddsA || data.bookOddsDraw || data.bookOddsB) setBookOdds({ A: data.bookOddsA || "", draw: data.bookOddsDraw || "", B: data.bookOddsB || "" });
+        setMainTab("analyse");
+        setStep(0);
+        setShowResults(false);
+      }} />}
 
       {mainTab === "scout" && <Scout onImport={(data) => {
         // Import Scout data into analyse form
